@@ -1,0 +1,10 @@
+site_name: LoRAir
+site_description: 'A LoRaWAN-based Air Quality Sensor'
+site_author: 'Make Monmouth'
+docs_dir: docs/
+repo_name: 'makemonmouth/lorair'
+repo_url: 'https://github.com/makemonmouth/lorair'
+nav:
+    - Home: index.md
+theme:
+  name: 'material'
