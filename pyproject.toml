@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "lorair"
+version = "0.1.0"
+description = "A citizen-science project to meaure air quality via LoRaWAN"
+authors = ["Matthew Macdonald-Wallace <matt@doics.co>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+platformio = "^6.1.11"
+mkdocs = "^1.5.3"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
