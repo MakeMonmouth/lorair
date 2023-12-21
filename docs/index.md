@@ -1,1 +1,1 @@
-# LoRAir - A LoRaWAN-based air quality monitor
+# Lorair - A LoRaWAN-based air quality monitor
