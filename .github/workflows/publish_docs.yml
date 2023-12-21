@@ -1,10 +1,19 @@
-site_name: LoRAir
-site_description: 'A LoRaWAN-based Air Quality Sensor'
-site_author: 'Make Monmouth'
-docs_dir: docs/
-repo_name: 'makemonmouth/lorair'
-repo_url: 'https://github.com/makemonmouth/lorair'
-nav:
-    - Home: index.md
-theme:
-  name: 'material'
+name: Publish docs via GitHub Pages
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    name: Deploy docs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v3
+
+      - name: Deploy docs
+        uses: mhausenblas/mkdocs-deploy-gh-pages@master
+        # Or use mhausenblas/mkdocs-deploy-gh-pages@nomaterial to build without the mkdocs-material theme
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
