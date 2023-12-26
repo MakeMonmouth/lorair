@@ -1,7 +1,15 @@
 #include <ESP32_LoRaWAN.h>
+#include <CayenneLPP.h>
+#include <SoftwareSerial.h>
 #include "Arduino.h"
-#include<CayenneLPP.h>
+#include <Wire.h>
+#include <SPI.h>
+#include <Adafruit_Sensor.h>
+#include "Adafruit_BME680.h"
 
+
+
+/******************************* LORAWAN **********************************************/
 
 //
 //  These must be public
@@ -29,22 +37,19 @@ uint8_t appPort = 2;
 //
 /*license for Heltec ESP32 LoRaWan, quary your ChipID relevant license: http://resource.heltec.cn/search */
 uint32_t license[4] = {0x9C5AA386,0x967D0549,0x333F6D6F,0x807DB52F}; // (uint32_t) LORAWAN_LICENSE;
-                                                                     //#if 0
-                                                                     //static uint32_t license [4] = { 0x9c5aa386, 0x967d0549, 0x333f6d6f, 0x807db52f }; // Matthew
-                                                                     //#else
-                                                                     //static uint32_t license [4] = { 0x6a3f7214, 0x0bcb2c9b, 0xfe0a5c7d, 0x3f7de4d3 }; // JCW
-                                                                     //#endif
+
 static uint8_t debugLevel = 0;
 static uint32_t appTxDutyCycle = 60000;
 
 
 // Sensor values
 
-int pm25 = 0;
-int pm10 = 0;
-int temperature = 0;
-int humidity = 0;
-int gas = 0;
+float pm25 = 0.0;
+float pm10 = 0.0;
+float temperature = 0.0;
+float humidity = 0.0;
+float airpressure = 0.0;
+float gas = 0.0;
 
 
 //
@@ -55,45 +60,105 @@ int gas = 0;
 CayenneLPP lpp(128);
 
 
-//static void prepareTxFrame (uint8_t port)
-//{
-//    appDataSize = 5;
-//    appData[0] = pm25;
-//    appData[1] = pm10;
-//    appData[2] = temperature;
-//    appData[3] = humidity;
-//    appData[4] = gas;
-//
-//     appDataSize = lpp.getSize();
-//      appData = lpp.getBuffer();
-//}
 static void prepareTxFrame( uint8_t port )
 {
   CayenneLPP *lpp = new CayenneLPP( LORAWAN_APP_DATA_MAX_SIZE );
 
   lpp->reset();
   lpp->addTemperature(0, temperature);
-  lpp->addRelativeHumidity(1, humidity);
-  lpp->addAnalogInput( 2, pm25 );
-  lpp->addAnalogInput( 3, pm10);
-  lpp->addAnalogInput( 4, gas);
+  lpp->addBarometricPressure(0, airpressure);
+  lpp->addRelativeHumidity(0, humidity);
+  lpp->addAnalogInput( 1, pm25 );
+  lpp->addAnalogInput( 2, pm10);
+  lpp->addAnalogInput( 3, gas);
 
   appDataSize = lpp->copy( appData );
 
   delete lpp;
 }
+/******************************* LORAWAN **********************************************/
 
+
+/******************************* Air Quality Sensor **********************************************/
+
+void run_aq_sensor() {
+}
+
+
+/******************************* Air Quality Sensor **********************************************/
+
+
+/******************************* BME680 Sensor **********************************************/
+
+#define SEALEVELPRESSURE_HPA (1013.25)
+
+Adafruit_BME680 bme;
+
+void run_bme_sensor() {
+
+  if (! bme.performReading()) {
+    Serial.println("Failed to perform reading :(");
+    return;
+  }
+  Serial.print("Temperature = ");
+  Serial.print(bme.temperature);
+  Serial.println(" *C");
+
+  Serial.print("Pressure = ");
+  Serial.print(bme.pressure / 100.0);
+  Serial.println(" hPa");
+
+  Serial.print("Humidity = ");
+  Serial.print(bme.humidity);
+  Serial.println(" %");
+
+  Serial.print("Gas = ");
+  Serial.print(bme.gas_resistance / 1000.0);
+  Serial.println(" KOhms");
+
+  Serial.print("Approx. Altitude = ");
+  Serial.print(bme.readAltitude(SEALEVELPRESSURE_HPA));
+  Serial.println(" m");
+
+  temperature = bme.temperature;
+  humidity = bme.humidity;
+  gas = bme.gas_resistance;
+  airpressure = bme.pressure / 100.0;
+
+
+  Serial.println();
+}
+
+/******************************* BME680 Sensor **********************************************/
 void setup ()
 {
-  if(mcuStarted==0)
-  {
-    LoRaWAN.displayMcuInit();
-  }
   Serial.begin(115200);
   while (!Serial);
-  SPI.begin(SCK,MISO,MOSI,SS);
+
+  Wire1.begin(SDA, SCL);
+
+
+SPI.begin(SCK,MISO,MOSI,SS);
+//  if(mcuStarted==0)
+//  {
+//    LoRaWAN.displayMcuInit();
+//  }
   Mcu.init(SS,RST_LoRa,DIO0,DIO1,license);
   deviceState = DEVICE_STATE_INIT;
+
+  if (!bme.begin(0x76, &Wire1)) {
+    Serial.println(F("Could not find a valid BME680 sensor, check wiring!"));
+    while (1);
+  } else {
+      Serial.println("Found BME680 at 0x76");
+  }
+
+  // Set up oversampling and filter initialization
+  bme.setTemperatureOversampling(BME680_OS_8X);
+  bme.setHumidityOversampling(BME680_OS_2X);
+  bme.setPressureOversampling(BME680_OS_4X);
+  bme.setIIRFilterSize(BME680_FILTER_SIZE_3);
+  bme.setGasHeater(320, 150); // 320*C for 150 ms
 }
 
 
@@ -118,7 +183,10 @@ void loop ()
 
         case DEVICE_STATE_SEND :
             {
-                LoRaWAN.displaySending();
+               // LoRaWAN.displaySending();
+
+                run_aq_sensor();
+                run_bme_sensor();
                 prepareTxFrame( appPort );
                 LoRaWAN.send(loraWanClass);
                 deviceState = DEVICE_STATE_CYCLE;
