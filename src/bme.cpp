@@ -6,6 +6,8 @@
 #include <SPI.h>
 #include <Adafruit_Sensor.h>
 #include "Adafruit_BME680.h"
+#include <TinyGPS++.h>
+
 
 
 
@@ -60,6 +62,182 @@ float gas = 0.0;
 CayenneLPP lpp(128);
 
 
+/******************************* LORAWAN **********************************************/
+
+/******************************* GPS     **********************************************/
+
+// The TinyGPS++ object
+TinyGPSPlus gps;
+
+#define GPSTX 37              //pin number for TX output from ESP32 - RX into GPS
+#define GPSRX 36              //pin number for RX input into ESP32 - TX from GPS
+
+#define GPSserial Serial2     //define GPSserial as ESP32 Serial2 
+
+static const uint32_t GPSBaud = 9600;
+
+///////////////////////////////////////////////////
+//Some utilities for going into low power mode
+TimerEvent_t sleepTimer;
+//Records whether our sleep/low power timer expired
+bool sleepTimerExpired;
+
+// This custom version of delay() ensures that the gps object
+// is being "fed".
+static void smartDelay(unsigned long ms)
+{
+  unsigned long start = millis();
+  do
+  {
+    while (Serial1.available())
+      gps.encode(Serial1.read());
+  } while (millis() - start < ms);
+}
+
+static void printFloat(float val, bool valid, int len, int prec)
+{
+  if (!valid)
+  {
+    while (len-- > 1)
+      Serial.print('*');
+    Serial.print(' ');
+  }
+  else
+  {
+    Serial.print(val, prec);
+    int vi = abs((int)val);
+    int flen = prec + (val < 0.0 ? 2 : 1); // . and -
+    flen += vi >= 1000 ? 4 : vi >= 100 ? 3 : vi >= 10 ? 2 : 1;
+    for (int i=flen; i<len; ++i)
+      Serial.print(' ');
+  }
+  smartDelay(0);
+}
+
+static void printInt(unsigned long val, bool valid, int len)
+{
+  char sz[32] = "*****************";
+  if (valid)
+    sprintf(sz, "%ld", val);
+  sz[len] = 0;
+  for (int i=strlen(sz); i<len; ++i)
+    sz[i] = ' ';
+  if (len > 0)
+    sz[len-1] = ' ';
+  Serial.print(sz);
+  smartDelay(0);
+}
+
+static void printDateTime(TinyGPSDate &d, TinyGPSTime &t)
+{
+  if (!d.isValid())
+  {
+    Serial.print(F("********** "));
+  }
+  else
+  {
+    char sz[32];
+    sprintf(sz, "%02d/%02d/%02d ", d.month(), d.day(), d.year());
+    Serial.print(sz);
+  }
+
+  if (!t.isValid())
+  {
+    Serial.print(F("******** "));
+  }
+  else
+  {
+    char sz[32];
+    sprintf(sz, "%02d:%02d:%02d ", t.hour(), t.minute(), t.second());
+    Serial.print(sz);
+  }
+
+  printInt(d.age(), d.isValid(), 5);
+  smartDelay(0);
+}
+
+static void printStr(const char *str, int len)
+{
+  int slen = strlen(str);
+  for (int i=0; i<len; ++i)
+    Serial.print(i<slen ? str[i] : ' ');
+  smartDelay(0);
+}
+
+static void wakeUp()
+{
+  sleepTimerExpired=true;
+}
+
+
+static void lowPowerSleep(uint32_t sleeptime)
+{
+  sleepTimerExpired=false;
+  TimerInit( &sleepTimer, &wakeUp );
+  TimerSetValue( &sleepTimer, sleeptime );
+  TimerStart( &sleepTimer );
+  //Low power handler also gets interrupted by other timers
+  //So wait until our timer had expired
+//  while (!sleepTimerExpired) lowPowerHandler();
+  TimerStop( &sleepTimer );
+}
+
+static void read_gps() {
+    static const double LONDON_LAT = 51.508131, LONDON_LON = -0.128002;
+
+  Serial.println(F("by Mikal Hart"));
+  Serial.println();
+  Serial.println(F("Sats HDOP  Latitude   Longitude   Fix  Date       Time     Date Alt    Course Speed Card  Distance Course Card  Chars Sentences Checksum"));
+  Serial.println(F("           (deg)      (deg)       Age                      Age  (m)    --- from GPS ----  ---- to London  ----  RX    RX        Fail"));
+  Serial.println(F("----------------------------------------------------------------------------------------------------------------------------------------"));
+
+  while (Serial2.available() > 0){
+      gps.encode(Serial2.read());
+    }
+
+  printInt(gps.satellites.value(), gps.satellites.isValid(), 5);
+  printFloat(gps.hdop.hdop(), gps.hdop.isValid(), 6, 1);
+  printFloat(gps.location.lat(), gps.location.isValid(), 11, 6);
+  printFloat(gps.location.lng(), gps.location.isValid(), 12, 6);
+  printInt(gps.location.age(), gps.location.isValid(), 5);
+  printDateTime(gps.date, gps.time);
+  printFloat(gps.altitude.meters(), gps.altitude.isValid(), 7, 2);
+  printFloat(gps.course.deg(), gps.course.isValid(), 7, 2);
+  printFloat(gps.speed.kmph(), gps.speed.isValid(), 6, 2);
+  printStr(gps.course.isValid() ? TinyGPSPlus::cardinal(gps.course.deg()) : "*** ", 6);
+
+  unsigned long distanceKmToLondon =
+    (unsigned long)TinyGPSPlus::distanceBetween(
+      gps.location.lat(),
+      gps.location.lng(),
+      LONDON_LAT, 
+      LONDON_LON) / 1000;
+  printInt(distanceKmToLondon, gps.location.isValid(), 9);
+
+  double courseToLondon =
+    TinyGPSPlus::courseTo(
+      gps.location.lat(),
+      gps.location.lng(),
+      LONDON_LAT, 
+      LONDON_LON);
+
+  printFloat(courseToLondon, gps.location.isValid(), 7, 2);
+
+  const char *cardinalToLondon = TinyGPSPlus::cardinal(courseToLondon);
+
+  printStr(gps.location.isValid() ? cardinalToLondon : "*** ", 6);
+
+  printInt(gps.charsProcessed(), true, 6);
+  printInt(gps.sentencesWithFix(), true, 10);
+  printInt(gps.failedChecksum(), true, 9);
+  Serial.println();
+  
+  smartDelay(1000);
+
+}
+
+/******************************* GPS     **********************************************/
+
 static void prepareTxFrame( uint8_t port )
 {
   CayenneLPP *lpp = new CayenneLPP( LORAWAN_APP_DATA_MAX_SIZE );
@@ -71,15 +249,18 @@ static void prepareTxFrame( uint8_t port )
   lpp->addAnalogInput( 1, pm25 );
   lpp->addAnalogInput( 2, pm10);
   lpp->addAnalogInput( 3, gas);
+  lpp->addGPS(0, gps.location.lat(), gps.location.lng(), gps.altitude.meters());
 
   appDataSize = lpp->copy( appData );
 
   delete lpp;
 }
-/******************************* LORAWAN **********************************************/
-
-
 /******************************* Air Quality Sensor **********************************************/
+
+#define SDSTX 38              //pin number for TX output from ESP32 - RX into GPS
+#define SDSRX 39              //pin number for RX input into ESP32 - TX from GPS
+
+#define SDSserial Serial1     //define GPSserial as ESP32 Serial2 
 
 void run_aq_sensor() {
 }
@@ -113,7 +294,7 @@ void run_bme_sensor() {
   Serial.println(" %");
 
   Serial.print("Gas = ");
-  Serial.print(bme.gas_resistance / 1000.0);
+  Serial.print(bme.gas_resistance);
   Serial.println(" KOhms");
 
   Serial.print("Approx. Altitude = ");
@@ -134,6 +315,8 @@ void setup ()
 {
   Serial.begin(115200);
   while (!Serial);
+  GPSserial.begin(9600, SERIAL_8N1, GPSTX, GPSRX);           //format is baud, mode, UART RX data, UART TX data 
+  SDSserial.begin(9600, SERIAL_8N1, SDSTX, SDSRX);           //format is baud, mode, UART RX data, UART TX data 
 
   Wire1.begin(SDA, SCL);
 
@@ -159,6 +342,7 @@ SPI.begin(SCK,MISO,MOSI,SS);
   bme.setPressureOversampling(BME680_OS_4X);
   bme.setIIRFilterSize(BME680_FILTER_SIZE_3);
   bme.setGasHeater(320, 150); // 320*C for 150 ms
+                              //
 }
 
 
@@ -187,6 +371,7 @@ void loop ()
 
                 run_aq_sensor();
                 run_bme_sensor();
+                read_gps();
                 prepareTxFrame( appPort );
                 LoRaWAN.send(loraWanClass);
                 deviceState = DEVICE_STATE_CYCLE;
